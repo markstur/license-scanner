@@ -124,6 +124,11 @@ func TestImporter_Validate(t *testing.T) {
 			id:      "Python-2.0.1",
 			wantErr: false,
 		},
+		{
+			name:    "IBM-pibs testdata has NBSP chars",
+			id:      "IBM-pibs",
+			wantErr: false,
+		},
 	}
 	testData := "../testdata/validator"
 	for _, tt := range tests {
