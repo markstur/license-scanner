@@ -10,11 +10,14 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/IBM/license-scanner/configurer"
+	"github.com/IBM/license-scanner/licenses"
+	"github.com/IBM/license-scanner/normalizer"
+	"github.com/IBM/license-scanner/resources"
+
 	"github.com/mrutkows/sbom-utility/log"
 
 	"github.com/spf13/viper"
-
-	"github.com/IBM/license-scanner/licenses"
 )
 
 var (
@@ -23,7 +26,34 @@ var (
 	thisDir           = filepath.Dir(thisFile)
 )
 
-func AddAllSPDXTemplates(cfg *viper.Viper) error {
+func Import(cfg *viper.Viper) error {
+	if cfg.GetString(configurer.AddAllFlag) == "" {
+		return nil // nothing to import
+	}
+	doImportSPDX := cfg.GetString(configurer.SpdxPathFlag) != "" || cfg.GetString(configurer.SpdxFlag) != configurer.DefaultResource
+	doImportCustom := cfg.GetString(configurer.CustomPathFlag) != "" || cfg.GetString(configurer.CustomFlag) != configurer.DefaultResource
+
+	if !doImportCustom && !doImportSPDX {
+		return fmt.Errorf("importing templates requires a non-default destination")
+	} else if doImportCustom && doImportSPDX {
+		return fmt.Errorf("importing templates requires one non-default SPDX or custom destination -- found both")
+	}
+
+	if doImportSPDX {
+		if err := importSPDX(cfg); err != nil {
+			return err
+		}
+	}
+
+	if doImportCustom {
+		if err := importCustom(cfg); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func importSPDX(cfg *viper.Viper) error {
 	// input dir is relative to root (if not an absolute path)
 	addAllDir := cfg.GetString("addAll")
 
@@ -69,22 +99,14 @@ func AddAllSPDXTemplates(cfg *viper.Viper) error {
 		return fmt.Errorf("template source dir %v is empty", templateSrcDir)
 	}
 
-	// destinations
-	rd := cfg.GetString(licenses.Resources)
-
-	templateDestDir := getDestPath(rd, licenseListVersion, "template")
-	preCheckDestDir := getDestPath(rd, licenseListVersion, "precheck")
-	textDestDir := getDestPath(rd, licenseListVersion, "testdata")
-	jsonDestDir := getDestPath(rd, licenseListVersion, "json")
-
-	if err := createEmptyLicenseListDataResourceDirs(templateDestDir, preCheckDestDir, textDestDir, jsonDestDir); err != nil {
+	if err := resources.MkdirAllSPDX(cfg); err != nil {
 		return err
 	}
 
-	if err := os.WriteFile(path.Join(jsonDestDir, "licenses.json"), SPDXLicenseListBytes, 0o600); err != nil {
+	if err := resources.WriteSPDXFile(cfg, SPDXLicenseListBytes, "json", "licenses.json"); err != nil {
 		return err
 	}
-	if err := os.WriteFile(path.Join(jsonDestDir, "exceptions.json"), SPDXExceptionsListBytes, 0o600); err != nil {
+	if err := resources.WriteSPDXFile(cfg, SPDXExceptionsListBytes, "json", "exceptions.json"); err != nil {
 		return err
 	}
 
@@ -93,19 +115,39 @@ func AddAllSPDXTemplates(cfg *viper.Viper) error {
 		templateName := de.Name()
 		id := strings.TrimSuffix(templateName, ".template.txt")
 		templateFile := path.Join(templateSrcDir, templateName)
-		textFile := path.Join(textSrcDir, id+".txt")
+		precheckName := id + ".json"
+		textName := id + ".txt"
+		textFile := path.Join(textSrcDir, textName)
+		templateBytes, err := os.ReadFile(templateFile)
+		if err != nil {
+			return err
+		}
+		textBytes, err := os.ReadFile(textFile)
+		if err != nil {
+			return err
+		}
 
-		if err := ValidateSPDXTemplateWithLicenseText(id, templateFile, textFile, templateDestDir, preCheckDestDir, textDestDir); err != nil {
+		staticBlocks, err := validate(id, templateBytes, textBytes, templateFile)
+		if err != nil {
 			deprecatedPrefix := "deprecated_"
 			if strings.HasPrefix(id, deprecatedPrefix) {
-				altTextFile := path.Join(textSrcDir, strings.TrimPrefix(id+".txt", deprecatedPrefix))
 				Logger.Infof("template ID %v is not valid retrying w/o testdata prefix", id)
-				err = ValidateSPDXTemplateWithLicenseText(id, templateFile, altTextFile, templateDestDir, preCheckDestDir, textDestDir)
+				altTextFile := path.Join(textSrcDir, strings.TrimPrefix(id+".txt", deprecatedPrefix))
+				textBytes, err = os.ReadFile(altTextFile)
+				if err != nil {
+					return err
+				}
+				staticBlocks, err = validate(id, templateBytes, textBytes, templateFile)
 			}
 			if err != nil {
 				_ = Logger.Errorf("template ID %v is not valid", id)
 				errorCount++
+				writeInvalidSPDXFiles(cfg, templateName, templateBytes, textName, textBytes)
+			} else if err := writeSPDXFiles(cfg, templateName, templateBytes, textName, textBytes, precheckName, staticBlocks); err != nil {
+				return err
 			}
+		} else if err := writeSPDXFiles(cfg, templateName, templateBytes, textName, textBytes, precheckName, staticBlocks); err != nil {
+			return err
 		}
 	}
 	if errorCount > 0 {
@@ -114,23 +156,117 @@ func AddAllSPDXTemplates(cfg *viper.Viper) error {
 	return nil
 }
 
-func createEmptyLicenseListDataResourceDirs(dirs ...string) error {
-	for _, dir := range dirs {
-		if err := os.MkdirAll(dir, os.ModePerm); err != nil {
-			return fmt.Errorf("cannot create destination dir %v error: %w", dir, err)
-		}
-		des, err := os.ReadDir(dir)
-		if err != nil {
-			return fmt.Errorf("cannot read destination dir %v error: %w", dir, err)
-		}
-		if len(des) > 0 {
-			return fmt.Errorf("destination dir %v is not empty", dir)
-		}
+func writeSPDXFiles(cfg *viper.Viper, templateName string, templateBytes []byte, textName string, textBytes []byte, precheckName string, staticBlocks []string) error {
+
+	if err := resources.WriteSPDXFile(cfg, templateBytes, "template", templateName); err != nil {
+		return Logger.Errorf("error writing template for %v: %w", templateName, err)
 	}
+	if err := resources.WriteSPDXFile(cfg, textBytes, "testdata", textName); err != nil {
+		return Logger.Errorf("error writing testdata for %v: %w", textName, err)
+	}
+	precheckBytes, err := getPreChecksBytes(staticBlocks)
+	if err != nil {
+		return Logger.Errorf("error getting precheck bytes for %v: %w", templateName, err)
+	}
+	if err := resources.WriteSPDXFile(cfg, precheckBytes, "precheck", precheckName); err != nil {
+		return Logger.Errorf("error writing precheck file for %v: %w", templateName, err)
+	}
+
 	return nil
 }
 
-func getDestPath(rd string, spdxVersionDir string, dir string) string {
-	destPath := path.Join(rd, "spdx", spdxVersionDir, dir)
-	return destPath
+// writeInvalidSPDXFiles stashes the template and text under testdata/invalid for further (manual) examination
+func writeInvalidSPDXFiles(cfg *viper.Viper, templateName string, templateBytes []byte, textName string, textBytes []byte) {
+	if err := resources.WriteSPDXFile(cfg, templateBytes, "testdata", "invalid", templateName); err != nil {
+		_ = Logger.Errorf("error writing template for %v: %w", templateName, err)
+	}
+	if err := resources.WriteSPDXFile(cfg, textBytes, "testdata", "invalid", textName); err != nil {
+		_ = Logger.Errorf("error writing testdata for %v: %w", textName, err)
+	}
+}
+
+func importCustom(cfg *viper.Viper) error {
+	// input dir is relative to root (if not an absolute path)
+	addAllDir := cfg.GetString("addAll")
+
+	if !path.IsAbs(addAllDir) {
+		addAllDir = path.Join(thisDir, "..", addAllDir)
+	}
+
+	// Create and input resource reader using the input dir as custom path
+	inputConfig, err := configurer.InitConfig(nil)
+	if err != nil {
+		return err
+	}
+	inputConfig.Set(configurer.CustomPathFlag, addAllDir)
+	inputResources := resources.NewResources(inputConfig)
+	licenseIds, err := inputResources.ReadCustomLicensePatternIds()
+
+	for _, id := range licenseIds {
+		des, idPath, err := inputResources.ReadCustomLicensePatternsDir(id)
+		if err != nil {
+			return err
+		}
+
+		if err := resources.MkdirAllCustom(cfg, id); err != nil {
+			return err
+		}
+
+		for _, de := range des {
+			if de.IsDir() {
+				continue
+			}
+			fileName := de.Name()
+			base := path.Base(fileName)
+			filePath := path.Join(idPath, fileName)
+			lowerFileName := strings.ToLower(fileName)
+			switch {
+			// the JSON payload is always stored in license_info.txt
+			case lowerFileName == licenses.LicenseInfoJSON:
+				bytes, err := os.ReadFile(filePath)
+				if err != nil {
+					return err
+				}
+				// Verify that unmarshal doesn't fail
+				if _, err := licenses.ReadLicenseInfoJSON(bytes); err != nil {
+					return Logger.Errorf("Unmarshal LicenseInfo from %v using LicenseReader error: %v", filePath, err)
+				}
+				if err := resources.WriteCustomFile(cfg, bytes, "license_patterns", id, fileName); err != nil {
+					return err
+				}
+			// all other files starting with "license_" are primary license patterns. Validate and copy primary and associated patterns.
+			case strings.HasPrefix(lowerFileName, licenses.PrimaryPattern), strings.HasPrefix(lowerFileName, licenses.AssociatedPattern), strings.HasPrefix(lowerFileName, licenses.OptionalPattern):
+				bytes, err := os.ReadFile(filePath)
+				if err != nil {
+					return err
+				}
+				// Verify that we can normalize the input text and create a regex
+				normalizedData := normalizer.NewNormalizationData(string(bytes), true)
+				err = normalizedData.NormalizeText()
+				if err == nil {
+					_, err = licenses.GenerateRegexFromNormalizedText(normalizedData.NormalizedText)
+					if err != nil {
+						return fmt.Errorf("cannot generate re: %v", err)
+					}
+				}
+
+				if err := resources.WriteCustomFile(cfg, bytes, "license_patterns", id, fileName); err != nil {
+					return err
+				}
+
+				staticBlocks := GetStaticBlocks(normalizedData)
+				precheckBytes, err := getPreChecksBytes(staticBlocks)
+				if err != nil {
+					return Logger.Errorf("error getting precheck bytes for %v: %w", base, err)
+				}
+				f := "prechecks_" + base // Add prefix
+				ext := path.Ext(f)
+				f = f[0:len(f)-len(ext)] + ".json" // Replace .txt with .json
+				if err := resources.WriteCustomFile(cfg, precheckBytes, "license_patterns", id, f); err != nil {
+					return Logger.Errorf("error writing precheck file for %v: %w", fileName, err)
+				}
+			}
+		}
+	}
+	return nil
 }
