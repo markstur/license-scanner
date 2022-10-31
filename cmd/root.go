@@ -86,7 +86,7 @@ Please give us feedback at: https://github.com/IBM/license-scanner/issues
 			} else if cfg.GetBool(configurer.ListFlag) {
 				return listLicenses(cfg)
 			} else if cfg.GetString(configurer.AddAllFlag) != "" {
-				return importer.AddAllSPDXTemplates(cfg)
+				return importer.Import(cfg)
 			} else if cfg.GetString(configurer.AddPatternFlag) != "" {
 				// Otherwise, if addPattern was requested, attempt to add that pattern.
 				return errors.New("add_pattern_from_spdx() is NOT-IMPLEMENTED")

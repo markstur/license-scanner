@@ -9,8 +9,197 @@ import (
 	"path"
 	"testing"
 
+	"github.com/IBM/license-scanner/configurer"
+
 	"github.com/mrutkows/sbom-utility/log"
 )
+
+func removeOutput(t *testing.T, path string) {
+	t.Helper()
+	if err := os.RemoveAll(path); err != nil {
+		t.Fatalf("error removing output dir: %v", err)
+	}
+}
+
+func TestImporter_Import(t *testing.T) {
+	const testData = "testdata/importer"
+	const testImp = "_TestImporter_Import_"
+	testImpPath := path.Join(testData, "output")
+	type args map[string]string
+	baseTestData := ".."
+	baseSPDXDir := "../resources/spdx"
+	baseCustomDir := "../resources/custom"
+	defer removeOutput(t, path.Join(baseTestData, testImpPath))
+	defer removeOutput(t, path.Join(baseSPDXDir, testImp))
+	defer removeOutput(t, path.Join(baseCustomDir, testImp))
+
+	tests := []struct {
+		args    args
+		wantErr bool // true to test and skip so that known problems can be added/skipped for future fixes
+	}{
+		{
+			args:    args{},
+			wantErr: true,
+		},
+		{
+			args: args{
+				"spdx":       testImp,
+				"spdxPath":   testImp,
+				"custom":     testImp,
+				"customPath": testImp,
+			},
+			wantErr: true,
+		},
+		{
+			args: args{
+				"spdx":   testImp,
+				"custom": testImp,
+			},
+			wantErr: true,
+		},
+		{
+			args: args{
+				"spdxPath":   testImp,
+				"customPath": testImp,
+			},
+			wantErr: true,
+		},
+		{
+			args: args{
+				"spdxPath": testImp,
+				"custom":   testImp,
+			},
+			wantErr: true,
+		},
+		{
+			args: args{
+				"spdx":       testImp,
+				"customPath": testImp,
+			},
+			wantErr: true,
+		},
+		{
+			args: args{
+				"customPath": testImpPath,
+			},
+			wantErr: false,
+		},
+		{
+			args: args{
+				"spdxPath": testImpPath,
+			},
+			wantErr: false,
+		},
+		{
+			args: args{
+				"custom": testImp,
+			},
+			wantErr: false,
+		},
+		{
+			args: args{
+				"spdx": testImp,
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		name := testImp
+		for k, v := range tt.args {
+			name = name + "_" + k + "_" + v
+		}
+		t.Run(name, func(t *testing.T) {
+			flagSet := configurer.NewDefaultFlags()
+			_ = flagSet.Set("addAll", testData)
+			for k, v := range tt.args {
+				_ = flagSet.Set(k, v)
+			}
+
+			config, err := configurer.InitConfig(flagSet)
+			if err != nil {
+				t.Fatal("unexpected InitConfig error")
+			}
+
+			err = Import(config)
+			if tt.wantErr == (err == nil) {
+				t.Fatalf("wantErr=%v, but got err=%v", tt.wantErr, err)
+			}
+
+			if err == nil {
+				for k, v := range tt.args {
+					switch k {
+					case "custom":
+						testForCustomFiles(t, baseCustomDir, v)
+					case "spdx":
+						testForSPDXFiles(t, baseSPDXDir, v)
+					case "customPath":
+						testForCustomFiles(t, baseTestData, v)
+					case "spdxPath":
+						testForSPDXFiles(t, baseTestData, v)
+					}
+				}
+			}
+		})
+	}
+}
+
+func testForCustomFiles(t *testing.T, baseDir string, subDirs string) {
+	t.Helper()
+
+	customFiles := []string{
+		"associated_text.txt",
+		"license_info.json",
+		"license_text.txt",
+		"optional_text.txt",
+		"prechecks_associated_text.json",
+		"prechecks_license_text.json",
+		"prechecks_optional_text.json",
+	}
+
+	d := path.Join(baseDir, subDirs, "license_patterns", "TESTIMP")
+	ff := customFiles
+	for _, f := range ff {
+		f := path.Join(d, f)
+		if _, err := os.Lstat(f); err != nil {
+			t.Error(err)
+		}
+	}
+}
+
+func testForSPDXFiles(t *testing.T, baseDir string, subDirs string) {
+	t.Helper()
+
+	fmap := map[string][]string{
+		"json": {
+			"licenses.json",
+			"exceptions.json",
+		},
+		"precheck": {
+			"0BSD.json",
+			"AAL.json",
+		},
+		"template": {
+			"0BSD.template.txt",
+			"AAL.template.txt",
+		},
+		"testdata": {
+			"0BSD.txt",
+			"AAL.txt",
+		},
+	}
+
+	for k, ff := range fmap {
+		d := path.Join(baseDir, subDirs, k)
+		for _, f := range ff {
+			f := path.Join(d, f)
+			if _, err := os.Lstat(f); err != nil {
+				t.Error(err)
+			}
+		}
+	}
+}
 
 func TestImporter_Validate(t *testing.T) {
 	t.Parallel()
@@ -122,11 +311,6 @@ func TestImporter_Validate(t *testing.T) {
 		{
 			reasons: "Python-2.0.1 ([0-9]{4},\\s) doesn't work with the , workaround",
 			id:      "Python-2.0.1",
-			wantErr: false,
-		},
-		{
-			name:    "IBM-pibs testdata has NBSP chars",
-			id:      "IBM-pibs",
 			wantErr: false,
 		},
 	}

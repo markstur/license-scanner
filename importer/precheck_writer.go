@@ -16,17 +16,20 @@ import (
 
 var replaceRE = regexp.MustCompile(`(<<.*?>>)`)
 
-func WritePreChecksFile(staticBlocks []string, f string) error {
+func getPreChecksBytes(staticBlocks []string) ([]byte, error) {
 	preChecks := licenses.LicensePreChecks{
 		StaticBlocks: staticBlocks,
 	}
 
-	b, err := json.MarshalIndent(preChecks, "", "  ")
+	return json.MarshalIndent(preChecks, "", "  ")
+}
+
+func WritePreChecksFile(staticBlocks []string, f string) error {
+	b, err := getPreChecksBytes(staticBlocks)
 	if err != nil {
 		return fmt.Errorf("error on MarshalIndent for %v: %w", f, err)
 	}
-
-	err = os.WriteFile(f, b, 0o666)
+	err = os.WriteFile(f, b, 0o600)
 	if err != nil {
 		return fmt.Errorf("error writing %v: %w", f, err)
 	}
