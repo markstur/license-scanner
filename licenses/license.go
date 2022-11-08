@@ -267,7 +267,7 @@ func (ll *LicenseLibrary) AddAllSPDX() error {
 
 	for _, sl := range licenseList.Licenses {
 		id := sl.LicenseID
-		tBytes, f, err := resources.ReadSPDXTemplateFile(ll.Config, id, sl.IsDeprecatedLicenseID)
+		tBytes, f, err := ll.Resources.ReadSPDXTemplateFile(id, sl.IsDeprecatedLicenseID)
 		if err != nil {
 			if os.IsNotExist(err) {
 				Logger.Debugf("Skipping missing template file '%v'", f)
@@ -296,7 +296,7 @@ func (ll *LicenseLibrary) AddAllSPDX() error {
 
 	for _, se := range exceptionsList.Exceptions {
 		id := se.LicenseExceptionID
-		tBytes, f, err := resources.ReadSPDXTemplateFile(ll.Config, id, se.IsDeprecatedLicenseID)
+		tBytes, f, err := ll.Resources.ReadSPDXTemplateFile(id, se.IsDeprecatedLicenseID)
 		if err != nil {
 			if os.IsNotExist(err) {
 				Logger.Debugf("Skipping missing template file '%v'", f)
@@ -324,7 +324,7 @@ func (ll *LicenseLibrary) AddAllSPDX() error {
 }
 
 func spdxLicenseLists(ll *LicenseLibrary) (licenseList SPDXLicenceList, exceptionsList SPDXLicenceList, err error) {
-	licenseListBytes, exceptionsBytes, err := resources.ReadSPDXJSONFiles(ll.Config)
+	licenseListBytes, exceptionsBytes, err := ll.Resources.ReadSPDXJSONFiles()
 	if err != nil {
 		return
 	}
@@ -338,7 +338,7 @@ func spdxLicenseLists(ll *LicenseLibrary) (licenseList SPDXLicenceList, exceptio
 }
 
 func addSPDXPreCheck(id string, templatePath string, isDeprecated bool, ll *LicenseLibrary) error {
-	pBytes, err := resources.ReadSPDXPreCheckFile(ll.Config, id, isDeprecated)
+	pBytes, err := ll.Resources.ReadSPDXPreCheckFile(id, isDeprecated)
 	if err != nil {
 		if os.IsNotExist(err) {
 			Logger.Debugf("Skipping missing precheck file for '%v'", id)

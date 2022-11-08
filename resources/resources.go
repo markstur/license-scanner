@@ -16,12 +16,29 @@ import (
 	"github.com/spf13/viper"
 )
 
+const (
+	LicensePatternsDir = "license_patterns"
+	JSONDir            = "json"
+)
+
 type Resources struct {
-	config *viper.Viper
+	config       *viper.Viper
+	spdxReader   resourceReader
+	spdxPath     string
+	customReader resourceReader
+	customPath   string
 }
 
 func NewResources(cfg *viper.Viper) *Resources {
-	return &Resources{cfg}
+	spdxReader, spdxPath := getSPDXReader(cfg)
+	customReader, customPath := getCustomReader(cfg)
+	return &Resources{
+		cfg,
+		spdxReader,
+		spdxPath,
+		customReader,
+		customPath,
+	}
 }
 
 type resourceReader interface {
@@ -29,31 +46,22 @@ type resourceReader interface {
 	ReadFile(name string) ([]byte, error)
 }
 
-type ReaderReader struct{}
+type osReader struct{}
 
 var (
 	//go:embed spdx/*/template spdx/*/precheck spdx/*/json custom/*/license_patterns
 	embeddedFS        embed.FS
 	_, thisFile, _, _                = runtime.Caller(0) // Dirs/files are relative to this file
 	thisDir                          = filepath.Dir(thisFile)
-	_                 resourceReader = ReaderReader{} // static check for implements interface
+	_                 resourceReader = osReader{} // static check for implements interface
 )
 
-func (rr ReaderReader) ReadDir(name string) ([]fs.DirEntry, error) {
+func (osr osReader) ReadDir(name string) ([]fs.DirEntry, error) {
 	return os.ReadDir(name)
 }
 
-func (rr ReaderReader) ReadFile(name string) ([]byte, error) {
+func (osr osReader) ReadFile(name string) ([]byte, error) {
 	return os.ReadFile(name)
-}
-
-func getResourcesPath(cfg *viper.Viper, pathFlag string, embeddedFlag string) string {
-	pathValue := cfg.GetString(pathFlag)
-	if pathValue == "" {
-		pathValue = path.Join(embeddedFlag, cfg.GetString(embeddedFlag))
-		return pathValue
-	}
-	return pathValue
 }
 
 // getResourcesWritePath determines path to resources including <thisDir> prefix for embedded resources.
@@ -69,34 +77,24 @@ func getResourcesWritePath(cfg *viper.Viper, pathFlag string, embeddedFlag strin
 	return path.Join(thisDir, "..", pathValue)
 }
 
+// getFileReader returns a resourceReader for embedded-or-not resources and the path
 func getFileReader(cfg *viper.Viper, pathFlag string, embeddedFlag string) (resourceReader, string) {
 	pathValue := cfg.GetString(pathFlag)
 	if pathValue == "" {
 		pathValue = path.Join(embeddedFlag, cfg.GetString(embeddedFlag))
 		return embeddedFS, pathValue
 	}
-	return ReaderReader{}, pathValue
+	return osReader{}, pathValue
 }
 
+// getSPDXReader returns a resourceReader for embedded-or-not SPDX resources and the path
 func getSPDXReader(cfg *viper.Viper) (resourceReader, string) {
 	return getFileReader(cfg, configurer.SpdxPathFlag, configurer.SpdxFlag)
 }
 
+// getCustomReader returns a resourceReader for embedded-or-not SPDX resources and the path
 func getCustomReader(cfg *viper.Viper) (resourceReader, string) {
 	return getFileReader(cfg, configurer.CustomPathFlag, configurer.CustomFlag)
-}
-
-func ReadSPDXJSONFiles(cfg *viper.Viper) (licenseListBytes []byte, exceptionsBytes []byte, err error) {
-	rr, spdxPath := getSPDXReader(cfg)
-	jsonSubDir := "json"
-	licensesJSON := path.Join(spdxPath, jsonSubDir, "licenses.json")
-	exceptionsJSON := path.Join(spdxPath, jsonSubDir, "exceptions.json")
-	licenseListBytes, err = rr.ReadFile(licensesJSON)
-	if err != nil {
-		return
-	}
-	exceptionsBytes, err = rr.ReadFile(exceptionsJSON)
-	return
 }
 
 func getSPDXTemplateFilePath(id string, isDeprecated bool, templatePath string) string {
@@ -117,26 +115,34 @@ func getSPDXPreCheckFilePath(id string, isDeprecated bool, preCheckPath string) 
 	return f
 }
 
-func ReadSPDXTemplateFile(cfg *viper.Viper, id string, isDeprecated bool) ([]byte, string, error) {
-	rr, spdxPath := getSPDXReader(cfg)
-	templatePath := path.Join(spdxPath, "template")
+func (r *Resources) ReadSPDXTemplateFile(id string, isDeprecated bool) ([]byte, string, error) {
+	templatePath := path.Join(r.spdxPath, "template")
 	f := getSPDXTemplateFilePath(id, isDeprecated, templatePath)
-	tBytes, err := rr.ReadFile(f)
+	tBytes, err := r.spdxReader.ReadFile(f)
 	return tBytes, f, err
 }
 
-func ReadSPDXPreCheckFile(cfg *viper.Viper, id string, isDeprecated bool) ([]byte, error) {
-	rr, spdxPath := getSPDXReader(cfg)
-	preCheckPath := path.Join(spdxPath, "precheck")
+func (r *Resources) ReadSPDXPreCheckFile(id string, isDeprecated bool) ([]byte, error) {
+	preCheckPath := path.Join(r.spdxPath, "precheck")
 	f := getSPDXPreCheckFilePath(id, isDeprecated, preCheckPath)
-	tBytes, err := rr.ReadFile(f)
+	tBytes, err := r.spdxReader.ReadFile(f)
 	return tBytes, err
 }
 
+func (r *Resources) ReadSPDXJSONFiles() (licenseListBytes []byte, exceptionsBytes []byte, err error) {
+	licensesJSON := path.Join(r.spdxPath, JSONDir, "licenses.json")
+	exceptionsJSON := path.Join(r.spdxPath, JSONDir, "exceptions.json")
+	licenseListBytes, err = r.spdxReader.ReadFile(licensesJSON)
+	if err != nil {
+		return
+	}
+	exceptionsBytes, err = r.spdxReader.ReadFile(exceptionsJSON)
+	return
+}
+
 func (r *Resources) ReadCustomLicensePatternIds() (ids []string, err error) {
-	rr, customPath := getCustomReader(r.config)
-	patternPath := path.Join(customPath, "license_patterns")
-	des, err := rr.ReadDir(patternPath)
+	patternPath := path.Join(r.customPath, LicensePatternsDir)
+	des, err := r.customReader.ReadDir(patternPath)
 	if err != nil {
 		return
 	}
@@ -147,22 +153,19 @@ func (r *Resources) ReadCustomLicensePatternIds() (ids []string, err error) {
 }
 
 func (r *Resources) ReadCustomLicensePatternsDir(id string) ([]fs.DirEntry, string, error) {
-	rr, customPath := getCustomReader(r.config)
-	idPath := path.Join(customPath, "license_patterns", id)
-	des, err := rr.ReadDir(idPath)
+	idPath := path.Join(r.customPath, LicensePatternsDir, id)
+	des, err := r.customReader.ReadDir(idPath)
 	return des, idPath, err
 }
 
 func (r *Resources) ReadCustomDir(dir string) ([]fs.DirEntry, string, error) {
-	rr, customPath := getCustomReader(r.config)
-	dirPath := path.Join(customPath, dir)
-	des, err := rr.ReadDir(dirPath)
+	dirPath := path.Join(r.customPath, dir)
+	des, err := r.customReader.ReadDir(dirPath)
 	return des, dirPath, err
 }
 
 func (r *Resources) ReadCustomFile(filePath string) ([]byte, error) {
-	rr, _ := getCustomReader(r.config)
-	b, err := rr.ReadFile(filePath)
+	b, err := r.customReader.ReadFile(filePath)
 	return b, err
 }
 
@@ -192,14 +195,6 @@ func MkdirAllSPDX(cfg *viper.Viper) error {
 func MkdirAllCustom(cfg *viper.Viper, id string) error {
 	dirs := []string{"license_patterns/" + id}
 	return mkdirAll(cfg, configurer.CustomPathFlag, configurer.CustomFlag, dirs...)
-}
-
-func GetSPDXPath(cfg *viper.Viper, dir string) string {
-	return path.Join(getResourcesPath(cfg, configurer.SpdxPathFlag, configurer.SpdxFlag), dir)
-}
-
-func GetCustomPath(cfg *viper.Viper, dir string) string {
-	return path.Join(getResourcesPath(cfg, configurer.CustomPathFlag, configurer.CustomFlag), dir)
 }
 
 func WriteSPDXFile(cfg *viper.Viper, bytes []byte, ff ...string) error {
