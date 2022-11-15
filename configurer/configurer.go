@@ -23,7 +23,7 @@ const (
 	KeywordsFlag    = "keywords"
 	ListFlag        = "list"
 	AddAllFlag      = "addAll"
-	AddPatternFlag  = "addPattern"
+	UpdateAllFlag   = "updateAll"
 	DebugFlag       = "debug"
 	QuietFlag       = "quiet"
 	LicenseFlag     = "license"
@@ -65,31 +65,19 @@ func InitConfig(flags *pflag.FlagSet) (*viper.Viper, error) {
 
 	configName := newViper.GetString("configName")
 	configPath := newViper.GetString("configPath")
-
-	// TODO: Deprecate configFrom in favor of configPath and configName
-	configFrom := newViper.GetString("configFrom")
-	if configFrom != "" {
-		if path.IsAbs(configFrom) {
-			newViper.SetConfigFile(configFrom)
-		} else {
-			configFrom = path.Join(thisDir, "..", configFrom)
-			newViper.SetConfigFile(configFrom)
+	newViper.SetConfigName(configName)
+	if configPath != "" {
+		fileInfo, err := os.Lstat(configPath)
+		if err != nil {
+			return nil, err
 		}
-	} else { // configPath (configName defaults to "config.<ext>")
-		newViper.SetConfigName(configName)
-		if configPath != "" {
-			fileInfo, err := os.Lstat(configPath)
-			if err != nil {
-				return nil, err
-			}
-			if !fileInfo.IsDir() {
-				return nil, fmt.Errorf("--configPath %s is not a directory", configPath)
-			}
-			newViper.AddConfigPath(configPath)
-		} else {
-			newViper.AddConfigPath(execPath)
-			newViper.AddConfigPath(projectRoot)
+		if !fileInfo.IsDir() {
+			return nil, fmt.Errorf("--configPath %s is not a directory", configPath)
 		}
+		newViper.AddConfigPath(configPath)
+	} else {
+		newViper.AddConfigPath(execPath)
+		newViper.AddConfigPath(projectRoot)
 	}
 
 	err := newViper.MergeInConfig()
@@ -149,9 +137,9 @@ func AddDefaultFlags(flagSet *pflag.FlagSet) {
 	flagSet.BoolP(NormalizedFlag, "n", false, "Flag normalized")
 	flagSet.BoolP(HashFlag, "x", false, "Output file hash")
 	flagSet.StringP(LicenseFlag, "l", "", "Display match debugging for the given license")
-	flagSet.StringP(AddPatternFlag, "a", "", "Add a new license pattern to the library, from SPDX")
 	flagSet.Bool(ListFlag, false, "List the license templates to be used")
-	flagSet.String(AddAllFlag, "", "Add the licenses from SPDX unzipped release")
+	flagSet.String(AddAllFlag, "", "Add licenses")
+	flagSet.Bool(UpdateAllFlag, false, "Update existing licenses")
 	flagSet.String(ConfigPathFlag, "", "Path to any config files")
 	flagSet.String(ConfigNameFlag, "config", "Base name for config file")
 	flagSet.String(SpdxFlag, DefaultResource, "Set of embedded SPDX templates to use")

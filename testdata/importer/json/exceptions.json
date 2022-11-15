@@ -12,18 +12,6 @@
         "http://directory.fedoraproject.org/wiki/GPL_Exception_License_Text",
         "https://web.archive.org/web/20080828121337/http://directory.fedoraproject.org/wiki/GPL_Exception_License_Text"
       ]
-    },
-    {
-      "reference": "./Classpath-exception-2.0.json",
-      "isDeprecatedLicenseId": false,
-      "detailsUrl": "./Classpath-exception-2.0.html",
-      "referenceNumber": 21,
-      "name": "Classpath exception 2.0",
-      "licenseExceptionId": "Classpath-exception-2.0",
-      "seeAlso": [
-        "http://www.gnu.org/software/classpath/license.html",
-        "https://fedoraproject.org/wiki/Licensing/GPL_Classpath_Exception"
-      ]
     }
   ],
   "releaseDate": "2022-08-12"

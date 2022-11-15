@@ -95,6 +95,7 @@ func Test_CLI_no_json_licenses(t *testing.T) {
 func Test_CLI_addAll(t *testing.T) {
 
 	addAll := "../testdata/addAll"
+	input := path.Join(addAll, "input")
 	output := path.Join(addAll, "output")
 	versionedDir := path.Join(output, "spdx/3.17")
 	newTemplate := path.Join(versionedDir, "template", "0BSD.template.txt")
@@ -120,8 +121,8 @@ func Test_CLI_addAll(t *testing.T) {
 
 	cmd := NewRootCmd()
 	cmd.SetArgs([]string{
-		"--addAll", "testdata/addAll/input",
-		"--spdxPath", "testdata/addAll/output/spdx/3.17",
+		"--addAll", input,
+		"--spdxPath", versionedDir,
 	})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("Got unexpected error: %v", err)

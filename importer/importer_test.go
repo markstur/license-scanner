@@ -22,16 +22,15 @@ func removeOutput(t *testing.T, path string) {
 }
 
 func TestImporter_Import(t *testing.T) {
-	const testData = "testdata/importer"
-	const testImp = "_TestImporter_Import_"
-	testImpPath := path.Join(testData, "output")
 	type args map[string]string
-	baseTestData := ".."
+	const testImp = "_TestImporter_Import_" // Unique-ish name for testing embedded resources
+	testData := path.Join("..", "testdata", "importer")
+	testOutputPath := path.Join(testData, "output")
 	baseSPDXDir := "../resources/spdx"
 	baseCustomDir := "../resources/custom"
-	defer removeOutput(t, path.Join(baseTestData, testImpPath))
-	defer removeOutput(t, path.Join(baseSPDXDir, testImp))
-	defer removeOutput(t, path.Join(baseCustomDir, testImp))
+	defer removeOutput(t, testOutputPath)                    // Used for --spdxPath and --customPath output
+	defer removeOutput(t, path.Join(baseSPDXDir, testImp))   // Used for embedded resources output (spdx/*)
+	defer removeOutput(t, path.Join(baseCustomDir, testImp)) // Used for embedded resources output (custom/*)
 
 	tests := []struct {
 		args    args
@@ -80,13 +79,13 @@ func TestImporter_Import(t *testing.T) {
 		},
 		{
 			args: args{
-				"customPath": testImpPath,
+				"customPath": testOutputPath,
 			},
 			wantErr: false,
 		},
 		{
 			args: args{
-				"spdxPath": testImpPath,
+				"spdxPath": testOutputPath,
 			},
 			wantErr: false,
 		},
@@ -112,10 +111,11 @@ func TestImporter_Import(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			flagSet := configurer.NewDefaultFlags()
-			_ = flagSet.Set("addAll", testData)
+			arguments := []string{"--addAll", testData}
 			for k, v := range tt.args {
-				_ = flagSet.Set(k, v)
+				arguments = append(arguments, "--"+k, v)
 			}
+			_ = flagSet.Parse(arguments)
 
 			config, err := configurer.InitConfig(flagSet)
 			if err != nil {
@@ -135,9 +135,9 @@ func TestImporter_Import(t *testing.T) {
 					case "spdx":
 						testForSPDXFiles(t, baseSPDXDir, v)
 					case "customPath":
-						testForCustomFiles(t, baseTestData, v)
+						testForCustomFiles(t, "", v)
 					case "spdxPath":
-						testForSPDXFiles(t, baseTestData, v)
+						testForSPDXFiles(t, "", v)
 					}
 				}
 			}

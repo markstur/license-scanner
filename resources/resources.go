@@ -22,22 +22,28 @@ const (
 )
 
 type Resources struct {
-	config       *viper.Viper
-	spdxReader   resourceReader
-	spdxPath     string
-	customReader resourceReader
-	customPath   string
+	config          *viper.Viper
+	spdxReader      resourceReader
+	spdxPath        string
+	customReader    resourceReader
+	customPath      string
+	customWritePath string
+	spdxWritePath   string
 }
 
 func NewResources(cfg *viper.Viper) *Resources {
 	spdxReader, spdxPath := getSPDXReader(cfg)
-	customReader, customPath := getCustomReader(cfg)
+	customReader, customReadPath := getCustomReader(cfg)
+	customWritePath := getResourcesWritePath(cfg, configurer.CustomPathFlag, configurer.CustomFlag)
+	spdxWritePath := getResourcesWritePath(cfg, configurer.SpdxPathFlag, configurer.SpdxFlag)
 	return &Resources{
 		cfg,
 		spdxReader,
 		spdxPath,
 		customReader,
-		customPath,
+		customReadPath,
+		customWritePath,
+		spdxWritePath,
 	}
 }
 
@@ -65,16 +71,15 @@ func (osr osReader) ReadFile(name string) ([]byte, error) {
 }
 
 // getResourcesWritePath determines path to resources including <thisDir> prefix for embedded resources.
+// Note: embedded FS is read-only, so this provides additional pathing to allow os.WriteFile etc to write to the source
+// of the embedded FS (which would be read into the embedded FS only upon restart).
 func getResourcesWritePath(cfg *viper.Viper, pathFlag string, embeddedFlag string) string {
 	pathValue := cfg.GetString(pathFlag)
 	if pathValue == "" {
 		pathValue = path.Join(thisDir, embeddedFlag, cfg.GetString(embeddedFlag))
 		return pathValue
 	}
-	if path.IsAbs(pathValue) {
-		return pathValue
-	}
-	return path.Join(thisDir, "..", pathValue)
+	return pathValue
 }
 
 // getFileReader returns a resourceReader for embedded-or-not resources and the path
@@ -106,6 +111,15 @@ func getSPDXTemplateFilePath(id string, isDeprecated bool, templatePath string) 
 	return f
 }
 
+func getSPDXTextFilePath(id string, isDeprecated bool, textPath string) string {
+	f := id + ".txt"
+	if isDeprecated {
+		f = "deprecated_" + f
+	}
+	f = path.Join(textPath, f)
+	return f
+}
+
 func getSPDXPreCheckFilePath(id string, isDeprecated bool, preCheckPath string) string {
 	f := id + ".json"
 	if isDeprecated {
@@ -120,6 +134,18 @@ func (r *Resources) ReadSPDXTemplateFile(id string, isDeprecated bool) ([]byte, 
 	f := getSPDXTemplateFilePath(id, isDeprecated, templatePath)
 	tBytes, err := r.spdxReader.ReadFile(f)
 	return tBytes, f, err
+}
+
+func (r *Resources) ReadSPDXTextFile(id string, isDeprecated bool) ([]byte, error) {
+	textPath := path.Join(r.spdxPath, "text")
+	f := getSPDXTextFilePath(id, isDeprecated, textPath)
+	tBytes, err := r.spdxReader.ReadFile(f)
+	if err != nil {
+		// retry without the deprecated_ prefix (fixes one SPDX 3.18 inconsistency)
+		f := getSPDXTextFilePath(id, false, textPath)
+		tBytes, err = r.spdxReader.ReadFile(f)
+	}
+	return tBytes, err
 }
 
 func (r *Resources) ReadSPDXPreCheckFile(id string, isDeprecated bool) ([]byte, error) {
@@ -169,6 +195,11 @@ func (r *Resources) ReadCustomFile(filePath string) ([]byte, error) {
 	return b, err
 }
 
+func (r *Resources) WriteCustomFile(bytes []byte, ff ...string) error {
+	f := path.Join(r.customWritePath, path.Join(ff...))
+	return os.WriteFile(f, bytes, 0o600)
+}
+
 func mkdirAll(cfg *viper.Viper, pathFlag string, embeddedFlag string, dirs ...string) error {
 	destPath := getResourcesWritePath(cfg, pathFlag, embeddedFlag)
 	for _, dir := range dirs {
@@ -187,22 +218,17 @@ func mkdirAll(cfg *viper.Viper, pathFlag string, embeddedFlag string, dirs ...st
 	return nil
 }
 
-func MkdirAllSPDX(cfg *viper.Viper) error {
+func (r *Resources) MkdirAllSPDX() error {
 	dirs := []string{"template", "precheck", "json", "testdata", "testdata/invalid"}
-	return mkdirAll(cfg, configurer.SpdxPathFlag, configurer.SpdxFlag, dirs...)
+	return mkdirAll(r.config, configurer.SpdxPathFlag, configurer.SpdxFlag, dirs...)
 }
 
-func MkdirAllCustom(cfg *viper.Viper, id string) error {
+func (r *Resources) MkdirAllCustom(id string) error {
 	dirs := []string{"license_patterns/" + id}
-	return mkdirAll(cfg, configurer.CustomPathFlag, configurer.CustomFlag, dirs...)
+	return mkdirAll(r.config, configurer.CustomPathFlag, configurer.CustomFlag, dirs...)
 }
 
-func WriteSPDXFile(cfg *viper.Viper, bytes []byte, ff ...string) error {
-	f := path.Join(getResourcesWritePath(cfg, configurer.SpdxPathFlag, configurer.SpdxFlag), path.Join(ff...))
-	return os.WriteFile(f, bytes, 0o600)
-}
-
-func WriteCustomFile(cfg *viper.Viper, bytes []byte, ff ...string) error {
-	f := path.Join(getResourcesWritePath(cfg, configurer.CustomPathFlag, configurer.CustomFlag), path.Join(ff...))
+func (r *Resources) WriteSPDXFile(bytes []byte, ff ...string) error {
+	f := path.Join(r.spdxWritePath, path.Join(ff...))
 	return os.WriteFile(f, bytes, 0o600)
 }

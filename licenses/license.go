@@ -258,7 +258,7 @@ func (ll *LicenseLibrary) AddAll() error {
 
 func (ll *LicenseLibrary) AddAllSPDX() error {
 
-	licenseList, exceptionsList, err := spdxLicenseLists(ll)
+	licenseList, exceptionsList, err := ReadSPDXLicenseLists(ll.Resources)
 	if err != nil {
 		return err
 	}
@@ -323,8 +323,8 @@ func (ll *LicenseLibrary) AddAllSPDX() error {
 	return nil
 }
 
-func spdxLicenseLists(ll *LicenseLibrary) (licenseList SPDXLicenceList, exceptionsList SPDXLicenceList, err error) {
-	licenseListBytes, exceptionsBytes, err := ll.Resources.ReadSPDXJSONFiles()
+func ReadSPDXLicenseLists(r *resources.Resources) (licenseList SPDXLicenceList, exceptionsList SPDXLicenceList, err error) {
+	licenseListBytes, exceptionsBytes, err := r.ReadSPDXJSONFiles()
 	if err != nil {
 		return
 	}
